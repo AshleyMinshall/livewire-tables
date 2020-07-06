@@ -2,7 +2,6 @@
 
 namespace Coryrose\LivewireTables\Commands;
 
-use Illuminate\Console\DetectsApplicationNamespace;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Livewire\Commands\ComponentParser;
@@ -10,8 +9,6 @@ use Livewire\Commands\FileManipulationCommand;
 
 class MakeLivewireTableCommand extends FileManipulationCommand
 {
-    use DetectsApplicationNamespace;
-
     protected $signature = 'livewire-tables:make {name} {--force}';
     protected $description = 'Create a new Livewire Table component.';
 

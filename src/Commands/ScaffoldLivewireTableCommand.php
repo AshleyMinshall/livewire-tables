@@ -2,7 +2,6 @@
 
 namespace Coryrose\LivewireTables\Commands;
 
-use Illuminate\Console\DetectsApplicationNamespace;
 use Illuminate\Support\Facades\File;
 use Livewire\Commands\ComponentParser;
 use Livewire\Commands\FileManipulationCommand;
@@ -10,8 +9,6 @@ use ReflectionClass;
 
 class ScaffoldLivewireTableCommand extends FileManipulationCommand
 {
-    use DetectsApplicationNamespace;
-
     protected $signature = 'livewire-tables:scaffold {name}';
 
     protected $description = 'Scaffold a Livewire Table component.';
