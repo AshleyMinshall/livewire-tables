@@ -4,31 +4,38 @@ namespace Coryrose\LivewireTables;
 
 use Illuminate\Support\Str;
 use Livewire\Component;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LivewireModelTable extends Component
 {
+    public $sortColumn = null;
     public $sortField = null;
     public $sortDir = null;
     public $search = null;
     public $paginate = true;
     public $pagination = 10;
     public $hasSearch = true;
-    public $fields = [];
+    
     public $css;
 
     protected $listeners = ['sortColumn' => 'setSort'];
 
+    public function fields()
+    {
+        return [];
+    }
+
     public function setSort($column)
     {
-        $this->sortField = array_key_exists('sort_field',
-            $this->fields[$column]) ? $this->fields[$column]['sort_field'] : $this->fields[$column]['name'];
-        if (! $this->sortDir) {
-            $this->sortDir = 'asc';
-        } elseif ($this->sortDir == 'asc') {
-            $this->sortDir = 'desc';
+        $sortDirLookup = ["asc" => "desc", "desc" => null, null => "asc"];
+        if ($column !== $this->sortColumn) {
+            $this->sortColumn = $column;
+            $this->sortDir = "asc";
         } else {
-            $this->sortDir = null;
-            $this->sortField = null;
+            $this->sortDir = $sortDirLookup[$this->sortDir];
+            if (is_null($this->sortDir)) {
+                $this->sortColumn = null;
+            }
         }
     }
 
@@ -48,16 +55,11 @@ class LivewireModelTable extends Component
         $query = $model->newQuery();
         $queryFields = $this->generateQueryFields($model);
         if ($this->with()) {
-            $query = $this->joinRelated($query, $model);
-            if ($this->sortIsRelatedField()) {
-                $query = $this->sortByRelatedField($query, $model);
-            } else {
-                $query = $this->sort($query);
-            }
-        } else {
-            $query = $this->sort($query);
+            $query = $this->joinManyRelations($query, $model);
         }
-        $query = $this->setSelectFields($query, $queryFields);
+        $query = $this->sort($query, $queryFields);
+        $query->select("{$model->getTable()}.*");
+        
         if ($this->hasSearch && $this->search && $this->search !== '') {
             $query = $this->search($query, $queryFields);
         }
@@ -65,24 +67,40 @@ class LivewireModelTable extends Component
         return $query;
     }
 
-    protected function sort($query)
+    protected function sort($query, $queryFields)
     {
-        if (! $this->sortField || ! $this->sortDir) {
+        if (is_null($this->sortColumn) || is_null($this->sortDir)) {
             return $query;
         }
+        $queryField = $queryFields[$this->sortColumn];
+        if (array_key_exists("orderBy", $queryField)) {
+            return $query->orderBy($queryField["orderBy"], $this->sortDir);
+        } else if (array_key_exists("name", $queryField)) {
+            return $query->orderBy($queryField["name"], $this->sortDir);
+        } else if (array_key_exists("orderByRaw", $queryField)) {
+            return $queryField["orderByRaw"]($query, $this->sortDir);
+        }
+    }
 
-        return $query->orderBy($this->sortField, $this->sortDir);
+    protected function searchOneField($query, $searchField, $or = true)
+    {
+        if (array_key_exists('rawSearch', $searchField)) {
+            return $searchField['rawSearch']($query);
+        } elseif ($or) {
+            return $query->orWhere($searchField['name'], 'LIKE', "%{$this->search}%");
+        } else {
+            return $query->where($searchField['name'], 'LIKE', "%{$this->search}%");
+        }
     }
 
     protected function search($query, $queryFields)
     {
-        $searchFields = $queryFields->where('searchable', true)->pluck('name');
+        $searchFields = $queryFields->where('searchable', true);
         $firstSearch = $searchFields->shift();
-        $query = $query->where($firstSearch, 'LIKE', "%{$this->search}%");
-        if ($searchFields->count() > 0) {
-            foreach ($searchFields->toArray() as $searchField) {
-                $query = $query->orWhere($searchField, 'LIKE', "%{$this->search}%");
-            }
+        $query = $this->searchOneField($query, $firstSearch, false);
+
+        foreach ($searchFields as $searchField) {
+            $query = $this->searchOneField($query, $searchField);
         }
 
         return $query;
@@ -90,25 +108,15 @@ class LivewireModelTable extends Component
 
     protected function paginate($query)
     {
-        if (! $this->paginate) {
+        if (!$this->paginate) {
             return $query->get();
         }
 
         return $query->paginate($this->pagination ?? 15);
     }
 
-    protected function sortByRelatedField($query, $model)
-    {
-        $relations = collect(explode('.', $this->sortField));
-        $relationship = $relations->first();
-        $sortField = $relations->pop();
-
-        return $query->orderBy($model->{$relationship}()->getRelated()->getTable().'.'.$sortField, $this->sortDir);
-    }
-
     public function model()
-    {
-    }
+    { }
 
     protected function with()
     {
@@ -120,41 +128,45 @@ class LivewireModelTable extends Component
         $this->search = null;
     }
 
-    /**
-     * @return bool
-     */
-    protected function sortIsRelatedField(): bool
-    {
-        return $this->sortField && Str::contains($this->sortField, '.') && $this->sortDir;
-    }
-
-    protected function joinRelated($query, $model)
+    protected function joinManyRelations($query)
     {
         $query = $query->with($this->with());
-        foreach ($this->with() as $relationship) {
-            $query = $query->leftJoin($model->{$relationship}()->getRelated()->getTable(),
-                $model->getTable().'.'.$model->getKeyName(), '=',
-                $model->{$relationship}()->getRelated()->getTable().'.'.$model->{$relationship}()->getForeignKeyName());
+        foreach ($this->with() as $with) {
+            $model = app($this->model());
+            foreach (explode(".", $with) as $relationship) {
+                $relatedTable = $model->{$relationship}()->getRelated()->getTable();
+                if (!collect($query->getQuery()->joins)->pluck('table')->contains($relatedTable)) {
+                    $localTable = $model->getTable();
+                    $localKey = $model->{$relationship}()->getForeignKeyName();
+                    $relatedKey = $model->{$relationship}()->getOwnerKeyName();
+
+                    if ($model->{$relationship}() instanceof BelongsTo) {
+                        $query->leftJoin($relatedTable, "{$relatedTable}.{$relatedKey}", "{$localTable}.{$localKey}");
+                    } else { // original join, not sure if correct?
+                        $query->leftJoin($relatedTable, "{$localTable}.{$localKey}", "{$relatedTable}.{$localKey}");
+                    }
+                }
+                $model = $model->{$relationship}()->getRelated();
+            }
         }
-
         return $query;
-    }
-
-    protected function setSelectFields($query, $queryFields)
-    {
-        return $query->select($queryFields->pluck('name')->toArray());
     }
 
     protected function generateQueryFields($model)
     {
-        return (collect($this->fields))->transform(function ($selectField) use ($model) {
-            if ($selectField['name'] == 'id') {
-                $selectField['name'] = $model->getTable().'.id';
-            } elseif (Str::contains($selectField['name'], '.')) {
-                $fieldParts = explode('.', $selectField['name']);
-                $selectField['name'] = $model->{$fieldParts[0]}()->getRelated()->getTable().'.'.$fieldParts[1];
+        return (collect($this->fields()))->transform(function ($selectField) use ($model) {
+            if (array_key_exists("name", $selectField)) {
+                if (Str::contains($selectField['name'], '.')) {
+                    $relationships = explode(".", $selectField['name']);
+                    for ($i = 0; $i < count($relationships) - 1; $i++) {
+                        $select = "{$model->{$relationships[$i]}()->getRelated()->getTable()}.{$relationships[$i + 1]}";
+                        $model = $model->{$relationships[$i]}()->getRelated();
+                    }
+                    $selectField['name'] = $select;
+                } else {
+                    $selectField['name'] = "{$model->getTable()}.{$selectField['name']}";
+                }
             }
-
             return $selectField;
         });
     }

@@ -5,6 +5,7 @@ namespace [namespace];
 use Coryrose\LivewireTables\LivewireModelTable;
 use Livewire\WithPagination;
 use App\User;
+use Illuminate\Database\Eloquent\Builder;
 
 class [class] extends LivewireModelTable
 {
@@ -14,14 +15,27 @@ class [class] extends LivewireModelTable
     public $pagination = 10;
     public $hasSearch = true;
 
-    public $fields = [
-        [
+    public function fields() {
+        return [
             'title' => 'ID',
             'name' => 'id',
             'header_class' => '',
             'cell_class' => '',
             'sortable' => true,
             'searchable' => true,
+            
+            // additional options, not required
+            
+            // 'orderBy' => 'some_column',
+            // 'orderByRaw' => function(Builder $query, $direction) {
+            //    return $query->orderByRaw("some_column, some_column2 $direction")
+            // }
+            // 'rawSearch' => function (Builder $query) {
+            //     return $query->orWhereRaw(
+            //         'CONCAT("some_column", " ", some_column2) LIKE LOWER(?)',
+            //         ["%{$this->search}%"]
+            //     );
+            // },
         ]
     ];
 
