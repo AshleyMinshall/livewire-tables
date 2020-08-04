@@ -36,8 +36,8 @@ class [class] extends LivewireModelTable
             //         ["%{$this->search}%"]
             //     );
             // },
-        ]
-    ];
+        ];
+    }
 
     public function render()
     {
